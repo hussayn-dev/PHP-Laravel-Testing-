@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Services\JsonResponseService;
 use Exception;
+use App\Services\TransferService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\Request;
@@ -18,13 +19,16 @@ class WalletController extends Controller
 {
 
  public $jsonResponseService;
- public function __construct(JsonResponseService $jsonResponseService)
+ public $transferService;
+
+ public function __construct(JsonResponseService $jsonResponseService, TransferService $transferService)
     {
         $this->jsonResponseService = $jsonResponseService;
+        $this->transferService = $transferService;
     }
 
  public function pay(Request $request, string $email) :JsonResponse
-  {
+    {
     try {
         $validation = Validator::make($request->all(),[
             'price' => 'required|numeric|regex:/^\d+(\.\d{1,2})?$/',
@@ -79,64 +83,16 @@ class WalletController extends Controller
     }
   }
 
- public function transfer(Request $request, $email)
+
+  public function transfer(Request $request, $email)
   {
-try {
+   try {
 
-        $validation = Validator::make($request->all(),[
-            'amount' => 'required|numeric|regex:/^\d+(\.\d{1,2})?$/',
-            'description' => 'bail|string|max:100',
-            'account_number' => 'required|regex:/^714[0-9]{7}$/',
-        ]);
-
-        if ($validation->fails()) {
-            return response()->json($validation->errors(), 400);
-        }
-
-        $user = User::where('email', $email)->first();
-
-        if(!$user) {
-            throw new Exception('Your account does not exist');
-        }
-
-        $recepient = Wallet::where('account_number', $request->account_number)->first();
-
-        if(!$recepient) {
-            throw new Exception('A user with this account number does not exist');
-        }
-
-        $transaction = null;
-        DB::transaction(function () use ($user, $recepient, $request, &$transaction)
-        {
-            $wallet = $user->wallet;
-
-            if(!$wallet) {
-                throw new Exception('Something went wrong, contact support team');
-            }
-
-            if($wallet->current_value < $request->amount) {
-                throw new Exception('Insufficient funds in wallet');
-            }
-
-            $transaction = Transactions::create([
-                'recepient_id' => $recepient->user->id,
-                'amount' => $request->amount,
-                'sender_id' => $user->id,
-                'description' => $request->description
-              ]);
-
-
-            $transaction->save();
-
-            // Update the sender's wallet balance
-             $wallet->current_value -= $request->amount;
-             $wallet->update();
-
-             // Update the recepient's wallet balance
-            $recepient->current_value += $request->amount;
-            $recepient->update();
-
-        });
+      $this->transferService->checkValidationRules($request);
+      $user = $this->transferService->checkUserWallet($email);
+      $recepient = $this->transferService->checkRecepientValidity($request);
+      $this->transferService->checkInsufficientFunds($user->wallet->current_value, $request->amount);
+      $transaction = $this->transferService->performTransaction($request, $user, $recepient);
 
         if(!$transaction) {
             throw new Exception('Something went wrong, try later');
