@@ -50,16 +50,57 @@ class WalletTest extends TestCase
         $this->assertNull($response);
     }
 
+
+    public function test_user_input_validation_failure()
+{
+    $input = [
+        "description" => "Snacks",
+        'account_number' => $this->recepient->wallet->account_number,
+    ];
+    $request = new Request();
+    $request = $request->merge($input);
+
+    $response =  $this->transferService->checkValidationRules($request);
+    $this->assertEquals(400, $response->getStatusCode());
+    $this->assertJson($response->getContent());
+    $decodedResponse = json_decode($response->getContent(), true);
+    $this->assertEquals('Please provide an amount.', $decodedResponse['amount'][0]);
+    $this->assertArrayHasKey('amount', $decodedResponse);
+
+}
+
     public function test_user_and_wallet_check () :void {
          $sender = $this->transferService->checkUserWallet($this->sender->email);
          $this->assertInstanceOf(User::class, $sender);
     }
+    public function test_user_and_wallet_check_failure() :void {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/A user with this account does not exist|Something went wrong, contact support team/');
+
+        $this->transferService->checkUserWallet("hussaynaaa@gmail.com");
+    }
+
     public function test_recepient_validity():void {
         $this->actingAs($this->sender);
       $recepient = $this->transferService->checkRecepientValidity($this->request);
 
       $this->assertInstanceOf(User::class, $recepient);
     }
+
+    public function test_recepient_validity_failure() :void {
+        $input = [
+            "amount" => 123,
+            "description" => "Snacks",
+            'account_number' => null,
+        ];
+        $request = new Request();
+        $request = $request->merge($input);
+
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/A user with this account number does not exist/');
+        $this->transferService->checkRecepientValidity($request);
+    }
+
 
    public function test_wallet_insufficient_funds():void {
     $this->sender->wallet->depositAmount($this->initialAmount);
@@ -68,6 +109,14 @@ class WalletTest extends TestCase
     $this->assertEquals($this->initialAmount, $this->sender->wallet->current_value);
     $this->assertNull($response);
 }
+
+  public function test_wallet_insufficient_funds_failure() :void {
+    $this->sender->wallet->depositAmount(0);
+    $this->expectException(\Exception::class);
+    $this->expectExceptionMessageMatches('/Insufficient funds in wallet/');
+
+    $this->transferService->checkInsufficientFunds($this->sender->wallet->current_value, $this->request->amount);
+  }
 
 public function test_user_perform_transaction () : void {
 
